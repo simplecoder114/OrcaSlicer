@@ -132,6 +132,8 @@ GuideFrame::GuideFrame(GUI_App *pGUI, long style)
     }
     m_browser->Hide();
     m_browser->SetSize(0, 0);
+    m_browser->EnableAccessToDevTools();
+
     
     SetSizer(topsizer);
 
@@ -447,11 +449,25 @@ void GuideFrame::OnScriptMessage(wxWebViewEvent &evt)
             for (int m = 0; m < nF; m++)
             {
                 std::string fName = fSelected[m];
-
-                m_ProfileJson["filament"][fName]["selected"] = 1;
+                // check if fNmae is in j["data"]["filamentInfo"][fName]["selectedPrinters"]
+                if (m_ProfileJson["filament"].find(fName) != m_ProfileJson["filament"].end())
+                    m_ProfileJson["filament"][fName]["selected"] = 1;
+                m_ProfileJson["filament"][fName]["enabled_printers"] = j["data"]["filamentInfo"][fName]["selectedPrinters"];
             }
-        }
-        else if (strCmd == "user_guide_finish") {
+
+            // Save profile json to file (for debugging purposes)
+            boost::filesystem::path profile_path = boost::filesystem::path(Slic3r::data_dir()) / "cached_profile.json";
+            
+            try {
+                std::ofstream profile_file(profile_path.string());
+                if (profile_file.is_open()) {
+                    profile_file << m_ProfileJson.dump(4);
+                    profile_file.close();
+                    BOOST_LOG_TRIVIAL(debug) << __FUNCTION__ << ": Saved profile to " << profile_path.string();
+                }
+            } catch (const std::exception& e) {
+                BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << ": Failed to save profile: " << e.what();
+            }
             SaveProfile();
 
             std::string oldregion = m_ProfileJson["region"];

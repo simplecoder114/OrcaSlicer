@@ -220,6 +220,9 @@ function SortUI()
 	//------
 	if(SelectNumber==0)
 		ChooseDefaultFilament();
+
+    // After building the UI, setup filament click handlers
+    SetupFilamentClickHandlers();
 }
 
 
@@ -253,7 +256,7 @@ function ChooseAllFilament()
 {
     let bCheck=$("#FilatypeList input:first").prop("checked");	
 	$("#FilatypeList input").prop("checked",bCheck);	
-    
+	
     SortFilament();
 }
 
@@ -429,6 +432,12 @@ function ChooseDefaultFilament()
 		    $(OneFF).prop("checked",true);
 	}
 	
+    // Keep this part since we're checking filaments
+    let currentPrinters = GetSelectedPrinters();
+    $("#ItemBlockArea input:checked").each(function() {
+        $(this).data("selectedPrinters", currentPrinters);
+    });
+	
 	ShowNotice(0);
 }
 
@@ -436,11 +445,16 @@ function SelectAllFilament( nShow )
 {
 	if( nShow==0 )
 	{
-		$('#ItemBlockArea .MItem:visible input').prop("checked",false);
+		$('#ItemBlockArea .MItem:visible input').prop("checked",false).each(function() {
+            $(this).removeData("selectedPrinters");
+        });
 	}
 	else
 	{
-		$('#ItemBlockArea .MItem:visible input').prop("checked",true);
+        let currentPrinters = GetSelectedPrinters();
+		$('#ItemBlockArea .MItem:visible input').prop("checked",true).each(function() {
+            $(this).data("selectedPrinters", currentPrinters);
+        });
 	}
 }
 
@@ -471,16 +485,33 @@ function ResponseFilamentResult()
 	}
 	
 	let FilaArray=new Array();
+    let FilaInfo = {};
+    
 	for(let n=0;n<nAll;n++)
 	{
-		let sName=FilaSelectedList[n].getAttribute("name");
+        let filaElement = FilaSelectedList[n];
+		let sName=filaElement.getAttribute("name");
 		
+        // Get the specific printers that were selected when this filament was checked
+        let selectedPrinters = $(filaElement).data("selectedPrinters");
+        if (!selectedPrinters) {
+            // Fallback to current printer selection if no data was stored
+            selectedPrinters = GetSelectedPrinters();
+        }
+        
 	    for( let key in m_ProfileItem['filament'] )
 	    {
 			let FName=GetFilamentShortname(key);
 			
 			if(FName==sName)
+            {
 				FilaArray.push(key);
+                
+                // Store printer info with the filament
+                FilaInfo[key] = {
+                    selectedPrinters: selectedPrinters
+                };
+            }
 		}
 	}
 	
@@ -489,6 +520,7 @@ function ResponseFilamentResult()
 	tSend['command']="save_userguide_filaments";
 	tSend['data']={};
 	tSend['data']['filament']=FilaArray;
+    tSend['data']['filamentInfo'] = FilaInfo;
 	
 	SendWXMessage( JSON.stringify(tSend) );
 	
@@ -613,6 +645,45 @@ function CFEdit( fid )
 	tSend['id']=fid;
 		
 	SendWXMessage( JSON.stringify(tSend) );	
+}
+
+// Get selected printers as an array of objects with model and nozzle info
+function GetSelectedPrinters() {
+    let selectedPrinters = [];
+    let pModel = $("#MachineList input:checked");
+    let nModel = pModel.length;
+    
+    for (let n = 0; n < nModel; n++) {
+        let oneModel = pModel[n];
+        let modelName = oneModel.getAttribute("mode");
+        
+        if (modelName !== 'all') {
+            selectedPrinters.push(modelName);
+        }
+    }
+    
+    return selectedPrinters;
+}
+
+// Add click handlers for filament checkboxes
+function SetupFilamentClickHandlers() {
+    // Remove any existing handler to avoid duplicates
+    $("#ItemBlockArea").off("change", "input[type='checkbox']");
+    
+    // Add click handler for filament checkboxes
+    $("#ItemBlockArea").on("change", "input[type='checkbox']", function() {
+        // Only associate printer data when the filament is being checked
+        if ($(this).prop("checked")) {
+            // Get currently selected printers when a filament is checked
+            let selectedPrinters = GetSelectedPrinters();
+            $(this).data("selectedPrinters", selectedPrinters);
+            
+            console.log("Filament selected: " + $(this).attr("name") + " with printers:", selectedPrinters);
+        } else {
+            // Clear printer data when unchecked
+            $(this).removeData("selectedPrinters");
+        }
+    });
 }
 
 
