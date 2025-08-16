@@ -6,54 +6,64 @@ on:
     tags: [v*]        # 标签触发
 
 env:
-  BOOST_VERSION: "1.78.0"           # 锁定Boost版本:cite[2]
-  WINDOWS_SDK_VERSION: "10.0.18362.0" # 规避问题SDK:cite[2]:cite[5]
+  BOOST_VERSION: "1.78.0"           # 锁定Boost版本
+  WINDOWS_SDK_VERSION: "10.0.18362.0" # 规避问题SDK
 
 jobs:
   build_windows:
+    name: Build Windows Installer
     runs-on: windows-latest
     timeout-minutes: 90
 
     steps:
-      # 1. 检出代码（指定2.3.0标签）
-      - name: Checkout v2.3.0
+      # 步骤1：检出代码（指定2.3.0标签）
+      - name: Checkout OrcaSlicer v2.3.0
         uses: actions/checkout@v4
         with:
           repository: SoftFever/OrcaSlicer
-          ref: v2.3.0  # 确保版本准确
+          ref: v2.3.0
           path: orca-src
 
-      # 2. 强制初始化MSVC环境（关键修复）
-      - name: Setup MSVC
+      # 步骤2：设置MSVC编译环境（关键修复）
+      - name: Setup MSVC Compiler
         uses: ilammy/msvc-dev-cmd@v1
         with:
           arch: x64
-          sdk: ${{ env.WINDOWS_SDK_VERSION }}  # 显式指定SDK版本:cite[2]
+          sdk: ${{ env.WINDOWS_SDK_VERSION }}
 
-      # 3. 安装锁定版本的Boost
+      # 步骤3：安装构建依赖
+      - name: Install Build Tools
+        run: |
+          choco install -y ninja cmake git python --no-progress
+          python -m pip install conan
+
+      # 步骤4：安装锁定版本的Boost（兼容性保障）
       - name: Install Boost ${{ env.BOOST_VERSION }}
         run: |
           choco install -y boost-msvc-14.3 `
             --version=${{ env.BOOST_VERSION }} `
-            --ignore-dependencies  # 跳过冲突依赖
+            --no-progress `
+            --ignore-dependencies
 
-      # 4. 配置CMake（强制指定SDK和Boost路径）
+      # 步骤5：配置CMake（Windows SDK版本强制指定）
       - name: Configure CMake
         working-directory: ./orca-src
         run: |
           cmake -B build -G Ninja ^
             -DCMAKE_BUILD_TYPE=Release ^
-            -DCMAKE_SYSTEM_VERSION=${{ env.WINDOWS_SDK_VERSION }} ^  # 覆盖默认SDK:cite[5]
-            -DBOOST_ROOT="C:/local/boost_1_78_0"  # 显式路径避免歧义
+            -DCMAKE_SYSTEM_VERSION=${{ env.WINDOWS_SDK_VERSION }} ^
+            -DBOOST_ROOT="C:/local/boost_${{ env.BOOST_VERSION.replace('.', '_') }}"
 
-      # 5. 编译安装包
+      # 步骤6：编译并打包安装程序
       - name: Build Installer
         working-directory: ./orca-src
-        run: cmake --build build --config Release --target package
+        run: |
+          cmake --build build --config Release --target package
 
-      # 6. 上传制品
+      # 步骤7：上传生成的安装包（使用v4修复弃用问题）
       - name: Upload Artifact
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4  # 使用v4版本解决弃用问题
         with:
-          name: Windows-Installer
+          name: OrcaSlicer-Windows-Installer
           path: orca-src/build/*.exe
+          retention-days: 7
