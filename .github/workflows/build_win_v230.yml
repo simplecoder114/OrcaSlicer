@@ -1,39 +1,36 @@
-# .github/workflows/build_windows_v230_final.yml
-name: Build Windows v2.3.0 Installer (Final)
+# .github/workflows/build_windows_v230_working.yml
+name: Build Windows v2.3.0 Installer (Working)
 
 on:
   workflow_dispatch:
   push:
-    branches: [ main ]   # 可改成你自己的分支
-  pull_request:
     branches: [ main ]
 
 env:
   VCPKG_ROOT: ${{ github.workspace }}/vcpkg
-  VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"
 
 jobs:
   build:
     runs-on: windows-latest
     steps:
-      # ---------- 1. 源码 ----------
       - name: Checkout
         uses: actions/checkout@v4
         with:
           submodules: recursive
           fetch-depth: 0
 
-      # ---------- 2. 工具链 ----------
-      - name: Setup MSVC & Ninja
+      # 1) 激活 MSVC + Ninja（一步解决编译器 & make 程序）
+      - name: Setup Developer Command Prompt
         uses: ilammy/msvc-dev-cmd@v1
-      - uses: ashutoshvarma/setup-ninja@master
+        with:
+          arch: x64
 
-      # ---------- 3. vcpkg.json ----------
-      - name: Pull official vcpkg.json
+      # 2) 获取官方 vcpkg.json（确保依赖列表完整）
+      - name: Pull vcpkg.json
         run: |
           curl -L https://raw.githubusercontent.com/SoftFever/OrcaSlicer/v2.3.0/vcpkg.json -o vcpkg.json
 
-      # ---------- 4. vcpkg 缓存 ----------
+      # 3) vcpkg 缓存
       - name: Cache vcpkg
         uses: actions/cache@v4
         with:
@@ -49,29 +46,26 @@ jobs:
           git clone --depth=1 https://github.com/microsoft/vcpkg.git
           .\vcpkg\bootstrap-vcpkg.bat
 
-      # ---------- 5. CMake 配置 ----------
+      # 4) 配置（注意：整行写在同一行，避免 PowerShell 续行符问题）
       - name: Configure
         run: >
           cmake -S . -B build
           -G Ninja
           -DCMAKE_BUILD_TYPE=Release
-          -DCMAKE_TOOLCHAIN_FILE="${{ env.VCPKG_ROOT }}/scripts/buildsystems/vcpkg.cmake"
+          -DCMAKE_TOOLCHAIN_FILE=${{ env.VCPKG_ROOT }}/scripts/buildsystems/vcpkg.cmake
           -DVCPKG_TARGET_TRIPLET=x64-windows
           -DSLIC3R_STATIC=ON
           -DSLIC3R_GUI=ON
           -DSLIC3R_PCH=ON
 
-      # ---------- 6. 编译 ----------
       - name: Build
         run: cmake --build build --config Release --parallel
 
-      # ---------- 7. 打包 ----------
       - name: Package
         shell: cmd
         run: |
           "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" /Qp build\package\innosetup\orca_setup.iss
 
-      # ---------- 8. 上传 ----------
       - name: Upload Installer
         uses: actions/upload-artifact@v4
         with:
