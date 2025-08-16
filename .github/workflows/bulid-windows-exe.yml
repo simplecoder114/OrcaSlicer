@@ -1,4 +1,4 @@
-name: Build windows exe
+name: Build all1
 
 on:
   push:
@@ -56,15 +56,16 @@ jobs:
           - os: windows-latest
           - os: macos-14
             arch: arm64
-    uses: ./.github/workflows/build_check_cache.yml
-    with:
-      os: ${{ matrix.os }}
-      arch: ${{ matrix.arch }}
-      build-deps-only: ${{ inputs.build-deps-only || false }}
-    secrets: inherit
-    
-    # ===================== 新增 Windows 专用修复步骤 =====================
-    steps: 
+    # ===================== 修改此处：使用内联步骤替代 uses =====================
+    runs-on: ${{ matrix.os }}
+    steps:
+      # 步骤1：检出代码
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          path: src
+
+      # 步骤2：Windows专用修复
       - name: Windows SDK and Boost Fixes
         if: matrix.os == 'windows-latest'
         run: |
@@ -84,7 +85,54 @@ jobs:
             }
           }
         shell: powershell
-    # ===================== 结束新增步骤 =====================
+
+      # 步骤3：安装通用依赖
+      - name: Install Dependencies
+        run: |
+          if [[ "${{ matrix.os }}" == "windows-latest" ]]; then
+            choco install -y ninja cmake git python --no-progress
+            python -m pip install conan
+          elif [[ "${{ matrix.os }}" == "ubuntu-24.04" ]]; then
+            sudo apt-get update
+            sudo apt-get install -y ninja-build cmake git build-essential
+          elif [[ "${{ matrix.os }}" == "macos-14" ]]; then
+            brew update
+            brew install ninja cmake git
+          fi
+        shell: bash
+
+      # 步骤4：构建项目
+      - name: Build Project
+        run: |
+          if [[ "${{ matrix.os }}" == "windows-latest" ]]; then
+            cd src
+            cmake -B build -G Ninja `
+              -DCMAKE_BUILD_TYPE=Release `
+              -DCMAKE_SYSTEM_VERSION=$env:CMAKE_SYSTEM_VERSION `
+              -DBOOST_ROOT="$env:BOOST_ROOT"
+            cmake --build build --config Release --target package
+          elif [[ "${{ matrix.os }}" == "ubuntu-24.04" ]]; then
+            cd src
+            cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+            cmake --build build --config Release
+          elif [[ "${{ matrix.os }}" == "macos-14" ]]; then
+            cd src
+            cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+            cmake --build build --config Release
+          fi
+        shell: bash
+
+      # 步骤5：上传制品
+      - name: Upload Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.os }}-Build
+          path: |
+            src/build/*.exe
+            src/build/*.AppImage
+            src/build/*.dmg
+          if-no-files-found: error
+    # ===================== 结束修改 =====================
 
   flatpak:
     name: "Flatpak"
