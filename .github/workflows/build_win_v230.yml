@@ -1,9 +1,11 @@
-# .github/workflows/build_windows_v230_fixed.yml
-name: Build Windows v2.3.0 Installer
+# .github/workflows/build_windows_v230_final.yml
+name: Build Windows v2.3.0 Installer (Final)
 
 on:
   workflow_dispatch:
   push:
+    branches: [ main ]   # 可改成你自己的分支
+  pull_request:
     branches: [ main ]
 
 env:
@@ -14,21 +16,24 @@ jobs:
   build:
     runs-on: windows-latest
     steps:
+      # ---------- 1. 源码 ----------
       - name: Checkout
         uses: actions/checkout@v4
         with:
           submodules: recursive
           fetch-depth: 0
 
-      # 1. 安装 Ninja 并加入 PATH
-      - name: Setup Ninja
-        uses: ashutoshvarma/setup-ninja@master   # 会自动加到 PATH
-
-      # 2. 激活 MSVC 环境
-      - name: Setup MSVC
+      # ---------- 2. 工具链 ----------
+      - name: Setup MSVC & Ninja
         uses: ilammy/msvc-dev-cmd@v1
+      - uses: ashutoshvarma/setup-ninja@master
 
-      # 3. vcpkg & 缓存
+      # ---------- 3. vcpkg.json ----------
+      - name: Pull official vcpkg.json
+        run: |
+          curl -L https://raw.githubusercontent.com/SoftFever/OrcaSlicer/v2.3.0/vcpkg.json -o vcpkg.json
+
+      # ---------- 4. vcpkg 缓存 ----------
       - name: Cache vcpkg
         uses: actions/cache@v4
         with:
@@ -36,37 +41,37 @@ jobs:
             ${{ github.workspace }}\vcpkg
             ${{ github.workspace }}\build\vcpkg_installed
           key: vcpkg-${{ runner.os }}-${{ hashFiles('vcpkg.json') }}
+          restore-keys: |
+            vcpkg-${{ runner.os }}-
 
       - name: Bootstrap vcpkg
         run: |
           git clone --depth=1 https://github.com/microsoft/vcpkg.git
           .\vcpkg\bootstrap-vcpkg.bat
 
-      - name: Pull vcpkg.json
-        run: |
-          curl -L https://raw.githubusercontent.com/SoftFever/OrcaSlicer/v2.3.0/vcpkg.json -o vcpkg.json
-
-      # 4. 配置 + 构建
+      # ---------- 5. CMake 配置 ----------
       - name: Configure
-        run: |
-          cmake -S . -B build ^
-                -G Ninja ^
-                -DCMAKE_BUILD_TYPE=Release ^
-                -DCMAKE_TOOLCHAIN_FILE="%VCPKG_ROOT%/scripts/buildsystems/vcpkg.cmake" ^
-                -DVCPKG_TARGET_TRIPLET=x64-windows ^
-                -DSLIC3R_STATIC=ON ^
-                -DSLIC3R_GUI=ON ^
-                -DSLIC3R_PCH=ON
+        run: >
+          cmake -S . -B build
+          -G Ninja
+          -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_TOOLCHAIN_FILE="${{ env.VCPKG_ROOT }}/scripts/buildsystems/vcpkg.cmake"
+          -DVCPKG_TARGET_TRIPLET=x64-windows
+          -DSLIC3R_STATIC=ON
+          -DSLIC3R_GUI=ON
+          -DSLIC3R_PCH=ON
 
+      # ---------- 6. 编译 ----------
       - name: Build
         run: cmake --build build --config Release --parallel
 
-      # 5. 打包 & 上传
+      # ---------- 7. 打包 ----------
       - name: Package
         shell: cmd
         run: |
           "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" /Qp build\package\innosetup\orca_setup.iss
 
+      # ---------- 8. 上传 ----------
       - name: Upload Installer
         uses: actions/upload-artifact@v4
         with:
