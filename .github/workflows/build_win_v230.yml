@@ -1,4 +1,4 @@
-# .github/workflows/build_windows_v230_final.yml
+# .github/workflows/build_windows_v230_working.yml
 name: Build Windows v2.3.0 Installer
 
 on:
@@ -19,15 +19,17 @@ jobs:
           submodules: recursive
           fetch-depth: 0
 
-      # 激活 MSVC 64-bit（不再传 -A x64）
-      - name: Setup MSVC
+      # 1. 同时准备 MSVC 和 Ninja
+      - name: Setup MSVC + Ninja
         uses: ilammy/msvc-dev-cmd@v1
-        with:
-          arch: x64
+      - name: Install Ninja
+        uses: ashutoshvarma/setup-ninja@master
 
+      # 2. 拉官方 vcpkg.json
       - name: Pull vcpkg.json
         run: curl -L https://raw.githubusercontent.com/SoftFever/OrcaSlicer/v2.3.0/vcpkg.json -o vcpkg.json
 
+      # 3. vcpkg 缓存
       - name: Cache vcpkg
         uses: actions/cache@v4
         with:
@@ -35,18 +37,21 @@ jobs:
             ${{ github.workspace }}\vcpkg
             ${{ github.workspace }}\build\vcpkg_installed
           key: vcpkg-${{ runner.os }}-${{ hashFiles('vcpkg.json') }}
+          restore-keys: |
+            vcpkg-${{ runner.os }}-
 
       - name: Bootstrap vcpkg
         run: |
           git clone --depth=1 https://github.com/microsoft/vcpkg.git
           .\vcpkg\bootstrap-vcpkg.bat
 
+      # 4. 配置（单引号 + 正确路径）
       - name: Configure
         run: >
           cmake -S . -B build
           -G Ninja
           -DCMAKE_BUILD_TYPE=Release
-          -DCMAKE_TOOLCHAIN_FILE=${{ env.VCPKG_ROOT }}/scripts/buildsystems/vcpkg.cmake
+          "-DCMAKE_TOOLCHAIN_FILE=${{ env.VCPKG_ROOT }}/scripts/buildsystems/vcpkg.cmake"
           -DVCPKG_TARGET_TRIPLET=x64-windows
           -DSLIC3R_STATIC=ON
           -DSLIC3R_GUI=ON
