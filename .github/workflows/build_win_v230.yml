@@ -1,13 +1,10 @@
-# .github/workflows/build_windows_v230_working.yml
+# .github/workflows/build_windows_v230_ready.yml
 name: Build Windows v2.3.0 Installer
 
 on:
   workflow_dispatch:
   push:
     branches: [ main ]
-
-env:
-  VCPKG_ROOT: ${{ github.workspace }}/vcpkg
 
 jobs:
   build:
@@ -28,39 +25,44 @@ jobs:
           arch: x64
       - uses: seanmiddleditch/gha-setup-ninja@master
 
-      # 使用 main 分支的 vcpkg.json
-      - name: Pull vcpkg.json
-        run: >
-          curl -L -f "https://raw.githubusercontent.com/SoftFever/OrcaSlicer/main/vcpkg.json"
-          -o vcpkg.json
-
       - name: Cache vcpkg
         uses: actions/cache@v4
         with:
           path: |
             ${{ github.workspace }}\vcpkg
             ${{ github.workspace }}\build\vcpkg_installed
-          key: vcpkg-${{ runner.os }}-${{ hashFiles('vcpkg.json') }}
+          key: vcpkg-${{ runner.os }}-${{ github.sha }}
 
-      - name: Bootstrap vcpkg
+      - name: Install vcpkg deps (classic mode)
         run: |
           git clone --depth=1 https://github.com/microsoft/vcpkg.git
           call vcpkg\bootstrap-vcpkg.bat
-
-      - name: Install vcpkg deps
-        run: call vcpkg\vcpkg install --triplet=x64-windows
+          call vcpkg\vcpkg install ^
+            boost:x64-windows ^
+            wxwidgets:x64-windows ^
+            opencv4:x64-windows ^
+            tbb:x64-windows ^
+            glew:x64-windows ^
+            glfw3:x64-windows ^
+            eigen3:x64-windows ^
+            nlopt:x64-windows ^
+            zlib:x64-windows
 
       - name: Configure & Build
-        run: |
-          cmake -S . -B build ^
-            -G Ninja ^
-            -DCMAKE_BUILD_TYPE=Release ^
-            "-DCMAKE_TOOLCHAIN_FILE=%VCPKG_ROOT%/scripts/buildsystems/vcpkg.cmake" ^
-            -DVCPKG_TARGET_TRIPLET=x64-windows ^
-            -DSLIC3R_STATIC=ON ^
-            -DSLIC3R_GUI=ON ^
-            -DSLIC3R_PCH=ON
-          cmake --build build --config Release --parallel
+        run: >
+          cmake -S . -B build
+          -G Ninja
+          -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_TOOLCHAIN_FILE=%VCPKG_ROOT%/scripts/buildsystems/vcpkg.cmake
+          -DVCPKG_TARGET_TRIPLET=x64-windows
+          -DSLIC3R_STATIC=ON
+          -DSLIC3R_GUI=ON
+          -DSLIC3R_PCH=ON
+        env:
+          VCPKG_ROOT: ${{ github.workspace }}/vcpkg
+
+      - name: Build
+        run: cmake --build build --config Release --parallel
 
       - name: Package
         run: |
