@@ -1,5 +1,5 @@
-# .github/workflows/build_windows_v230_working.yml
-name: Build Windows v2.3.0 Installer (Working)
+# .github/workflows/build_windows_v230_final.yml
+name: Build Windows v2.3.0 Installer
 
 on:
   workflow_dispatch:
@@ -19,18 +19,15 @@ jobs:
           submodules: recursive
           fetch-depth: 0
 
-      # 1) 激活 MSVC + Ninja（一步解决编译器 & make 程序）
-      - name: Setup Developer Command Prompt
+      # 激活 MSVC 64-bit（不再传 -A x64）
+      - name: Setup MSVC
         uses: ilammy/msvc-dev-cmd@v1
         with:
           arch: x64
 
-      # 2) 获取官方 vcpkg.json（确保依赖列表完整）
       - name: Pull vcpkg.json
-        run: |
-          curl -L https://raw.githubusercontent.com/SoftFever/OrcaSlicer/v2.3.0/vcpkg.json -o vcpkg.json
+        run: curl -L https://raw.githubusercontent.com/SoftFever/OrcaSlicer/v2.3.0/vcpkg.json -o vcpkg.json
 
-      # 3) vcpkg 缓存
       - name: Cache vcpkg
         uses: actions/cache@v4
         with:
@@ -38,15 +35,12 @@ jobs:
             ${{ github.workspace }}\vcpkg
             ${{ github.workspace }}\build\vcpkg_installed
           key: vcpkg-${{ runner.os }}-${{ hashFiles('vcpkg.json') }}
-          restore-keys: |
-            vcpkg-${{ runner.os }}-
 
       - name: Bootstrap vcpkg
         run: |
           git clone --depth=1 https://github.com/microsoft/vcpkg.git
           .\vcpkg\bootstrap-vcpkg.bat
 
-      # 4) 配置（注意：整行写在同一行，避免 PowerShell 续行符问题）
       - name: Configure
         run: >
           cmake -S . -B build
