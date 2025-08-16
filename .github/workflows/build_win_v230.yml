@@ -1,5 +1,5 @@
-# .github/workflows/build_windows_v230_complete.yml
-name: Build Windows v2.3.0 Installer
+# .github/workflows/build_win_v230.yml
+name: Build Windows Only (v2.3.0)
 
 on:
   workflow_dispatch:
@@ -11,59 +11,74 @@ on:
 
   push:
     branches:
-      - main        # 可改成你自己的分支
+      - main                 # 可改成你自己的分支
+    paths:
+      - 'deps/**'
+      - 'src/**'
+      - '**/CMakeLists.txt'
+      - 'version.inc'
+      - 'resources/**'
+      - '.github/workflows/build_win_v230.yml'
+
   pull_request:
     branches:
       - main
+    paths:
+      - 'deps/**'
+      - 'src/**'
+      - '**/CMakeLists.txt'
+      - 'version.inc'
+      - '.github/workflows/build_win_v230.yml'
 
-env:
-  VCPKG_ROOT: ${{ github.workspace }}/vcpkg
-  VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 jobs:
+  # 1. 依赖缓存 job（复用官方逻辑）
+  build_deps:
+    name: Build Deps
+    uses: ./.github/workflows/build_check_cache.yml
+    if: ${{ !inputs.build-deps-only }}
+    with:
+      os: windows-latest
+      arch: x64
+      build-deps-only: ${{ inputs.build-deps-only || false }}
+    secrets: inherit
+
+  # 2. 主构建 job（仅 Windows）
   build:
+    name: Build Windows
     runs-on: windows-latest
+    needs: build_deps
+    if: ${{ !inputs.build-deps-only }}
     steps:
-      # ---------- 1. 源码 ----------
       - name: Checkout
         uses: actions/checkout@v4
         with:
           submodules: recursive
           fetch-depth: 0
 
-      # ---------- 2. 工具链 ----------
       - name: Setup MSVC & Ninja
         uses: ilammy/msvc-dev-cmd@v1
       - uses: ashutoshvarma/setup-ninja@master
 
-      # ---------- 3. vcpkg 及缓存 ----------
-      - name: Cache vcpkg & deps
-        uses: actions/cache@v4
+      # 恢复官方 vcpkg 缓存
+      - name: Restore vcpkg cache
+        uses: actions/cache/restore@v4
         with:
           path: |
-            vcpkg
-            build/vcpkg_installed
-          key: vcpkg-${{ runner.os }}-${{ hashFiles('vcpkg.json') }}
+            ${{ github.workspace }}\build\vcpkg_installed
+          key: vcpkg-${{ runner.os }}-x64-${{ hashFiles('vcpkg.json') }}
           restore-keys: |
-            vcpkg-${{ runner.os }}-
+            vcpkg-${{ runner.os }}-x64-
 
-      - name: Bootstrap vcpkg
-        run: |
-          git clone --depth=1 https://github.com/microsoft/vcpkg.git
-          .\vcpkg\bootstrap-vcpkg.bat
-
-      - name: Install vcpkg deps
-        run: |
-          .\vcpkg\vcpkg install --triplet=x64-windows
-
-      # ---------- 4. CMake ----------
       - name: Configure
         run: |
           cmake -S . -B build `
                 -G "Ninja" `
                 -DCMAKE_BUILD_TYPE=Release `
-                -DCMAKE_TOOLCHAIN_FILE="${{ env.VCPKG_ROOT }}/scripts/buildsystems/vcpkg.cmake" `
-                -DVCPKG_TARGET_TRIPLET=x64-windows `
+                -DCMAKE_TOOLCHAIN_FILE="${{ github.workspace }}\vcpkg\scripts/buildsystems/vcpkg.cmake" `
                 -DSLIC3R_STATIC=ON `
                 -DSLIC3R_GUI=ON `
                 -DSLIC3R_PCH=ON
@@ -71,15 +86,13 @@ jobs:
       - name: Build
         run: cmake --build build --config Release --parallel
 
-      # ---------- 5. 打包 ----------
       - name: Package
         shell: cmd
         run: |
           "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" /Qp build\package\innosetup\orca_setup.iss
 
-      # ---------- 6. 上传 ----------
       - name: Upload Installer
         uses: actions/upload-artifact@v4
         with:
-          name: OrcaSlicer_Windows_v2.3.0_installer
+          name: OrcaSlicer_Windows_Installer_v2.3.0
           path: build\package\OrcaSlicer*.exe
