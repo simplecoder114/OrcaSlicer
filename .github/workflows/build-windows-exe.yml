@@ -1,74 +1,96 @@
 name: Build Windows Installer
 
 on:
-  workflow_dispatch:  # 手动触发
   push:
-    tags: [v*]        # 标签触发
+    branches:
+     - main
+     - release/*
+    paths:
+     - 'deps/**'
+     - 'src/**'
+     - '**/CMakeLists.txt'
+     - 'version.inc'
+     - 'localization/**'
+     - 'resources/**'
+     - 'build_release_vs2022.bat'
 
+  pull_request:
+    branches:
+     - main
+     - release/*
+    paths:
+     - 'deps/**'
+     - 'src/**'
+     - '**/CMakeLists.txt'
+     - 'version.inc'
+     - 'build_release_vs2022.bat'
+
+  workflow_dispatch: # 允许手动触发
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+  
 env:
-  BOOST_VERSION: "1.78.0"           # 锁定Boost版本
-  WINDOWS_SDK_VERSION: "10.0.18362.0" # 规避问题SDK
+  BOOST_VERSION: "1.78.0"       # 锁定Boost版本
+  WINDOWS_SDK_VERSION: "10.0.18362.0"  # 指定兼容的SDK版本
 
 jobs:
   build_windows:
     name: Build Windows Installer
     runs-on: windows-latest
-    timeout-minutes: 90
+    timeout-minutes: 90  # 延长超时时间
 
     steps:
-      # 步骤1：检出代码（指定2.3.0标签）
-      - name: Checkout OrcaSlicer v2.3.0
+      # 步骤1：检出代码
+      - name: Checkout
         uses: actions/checkout@v4
         with:
-          repository: SoftFever/OrcaSlicer
-          ref: v2.3.0
-          path: orca-src
+          path: src
 
-      # 步骤2：设置MSVC编译环境（关键修复）
-      - name: Setup MSVC Compiler
-        uses: ilammy/msvc-dev-cmd@v1
-        with:
-          arch: x64
-          sdk: ${{ env.WINDOWS_SDK_VERSION }}
+      # 步骤2：安装Boost和设置环境
+      - name: Install Boost and Set Environment
+        run: |
+          # 安装指定版本的Boost
+          choco install -y boost-msvc-14.3 --version=$env:BOOST_VERSION --no-progress --ignore-dependencies
+          
+          # 计算Boost路径
+          $boostVersion = "$env:BOOST_VERSION".Replace('.', '_')
+          $boostRoot = "C:/local/boost_$boostVersion"
+          echo "BOOST_ROOT=$boostRoot" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          echo "CMAKE_SYSTEM_VERSION=$env:WINDOWS_SDK_VERSION" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          
+          # 配置MSVC环境
+          $vsPath = &"${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath
+          cmd.exe /c "call `"$vsPath\VC\Auxiliary\Build\vcvars64.bat`" && set > env_vars.txt"
+          Get-Content env_vars.txt | ForEach-Object { 
+            if ($_ -match "^(.*?)=(.*)$") { 
+              Write-Output "$($matches[1])=$($matches[2])" >> $env:GITHUB_ENV 
+            }
+          }
+        shell: powershell
 
-      # 步骤3：安装构建依赖
+      # 步骤3：安装构建工具
       - name: Install Build Tools
         run: |
           choco install -y ninja cmake git python --no-progress
           python -m pip install conan
 
-      # 步骤4：安装锁定版本的Boost（兼容性保障）
-      - name: Install Boost ${{ env.BOOST_VERSION }}
+      # 步骤4：构建项目
+      - name: Build Project
         run: |
-          choco install -y boost-msvc-14.3 `
-            --version=${{ env.BOOST_VERSION }} `
-            --no-progress `
-            --ignore-dependencies
-          
-          # 计算Boost路径并设置为环境变量
-          $boostVersion = "${{ env.BOOST_VERSION }}".Replace('.', '_')
-          $boostRoot = "C:/local/boost_$boostVersion"
-          echo "BOOST_ROOT=$boostRoot" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-
-      # 步骤5：配置CMake（Windows SDK版本强制指定）
-      - name: Configure CMake
-        working-directory: ./orca-src
-        run: |
+          cd src
           cmake -B build -G Ninja ^
             -DCMAKE_BUILD_TYPE=Release ^
-            -DCMAKE_SYSTEM_VERSION=${{ env.WINDOWS_SDK_VERSION }} ^
-            -DBOOST_ROOT="$env:BOOST_ROOT"  # 使用环境变量
-
-      # 步骤6：编译并打包安装程序
-      - name: Build Installer
-        working-directory: ./orca-src
-        run: |
+            -DCMAKE_SYSTEM_VERSION=$env:CMAKE_SYSTEM_VERSION ^
+            -DBOOST_ROOT="$env:BOOST_ROOT"
           cmake --build build --config Release --target package
+        shell: cmd  # 使用cmd确保Windows命令正确执行
 
-      # 步骤7：上传生成的安装包（使用v4修复弃用问题）
+      # 步骤5：上传安装包
       - name: Upload Artifact
-        uses: actions/upload-artifact@v4  # 使用v4版本解决弃用问题
+        uses: actions/upload-artifact@v4
         with:
-          name: OrcaSlicer-Windows-Installer
-          path: orca-src/build/*.exe
+          name: Windows-Installer
+          path: src/build/*.exe
           retention-days: 7
