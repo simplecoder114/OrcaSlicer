@@ -33,7 +33,7 @@ jobs:
             ${{ github.workspace }}\build\vcpkg_installed
           key: vcpkg-${{ runner.os }}-${{ github.sha }}
 
-      - name: Install vcpkg deps (classic mode)
+      - name: Install vcpkg deps (classic)
         run: |
           git clone --depth=1 https://github.com/microsoft/vcpkg.git
           call vcpkg\bootstrap-vcpkg.bat
@@ -46,7 +46,8 @@ jobs:
             glfw3:x64-windows ^
             eigen3:x64-windows ^
             nlopt:x64-windows ^
-            zlib:x64-windows
+            zlib:x64-windows ^
+            curl:x64-windows
 
       - name: Configure & Build
         run: >
