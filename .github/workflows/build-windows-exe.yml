@@ -44,6 +44,11 @@ jobs:
             --version=${{ env.BOOST_VERSION }} `
             --no-progress `
             --ignore-dependencies
+          
+          # 计算Boost路径并设置为环境变量
+          $boostVersion = "${{ env.BOOST_VERSION }}".Replace('.', '_')
+          $boostRoot = "C:/local/boost_$boostVersion"
+          echo "BOOST_ROOT=$boostRoot" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       # 步骤5：配置CMake（Windows SDK版本强制指定）
       - name: Configure CMake
@@ -52,7 +57,7 @@ jobs:
           cmake -B build -G Ninja ^
             -DCMAKE_BUILD_TYPE=Release ^
             -DCMAKE_SYSTEM_VERSION=${{ env.WINDOWS_SDK_VERSION }} ^
-            -DBOOST_ROOT="C:/local/boost_${{ env.BOOST_VERSION.replace('.', '_') }}"
+            -DBOOST_ROOT="$env:BOOST_ROOT"  # 使用环境变量
 
       # 步骤6：编译并打包安装程序
       - name: Build Installer
