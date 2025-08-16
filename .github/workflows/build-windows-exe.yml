@@ -12,12 +12,13 @@ on:
 env:
   BOOST_VERSION: "1.78.0"
   WINDOWS_SDK_VERSION: "10.0.18362.0"
+  BOOST_SHA256: "8681f175d4bdb26c52222665793eef08490d7758529330f98d3b29dd0735bccc" # 1.78.0 的 SHA256
 
 jobs:
   build_windows:
     name: Build Windows Installer
     runs-on: windows-latest
-    timeout-minutes: 90
+    timeout-minutes: 120  # 增加超时时间以容纳 Boost 编译
 
     steps:
       - name: Checkout v2.3.0
@@ -32,22 +33,41 @@ jobs:
           choco install -y ninja cmake git python --no-progress
           python -m pip install conan
 
-      - name: Download Boost
+      - name: Download and build Boost from source
         run: |
+          # 设置路径变量
           $boostVersion = "$env:BOOST_VERSION".Replace('.', '_')
-          $boostInstaller = "boost_${boostVersion}-msvc-14.3-64.exe"
-          $url = "https://sourceforge.net/projects/boost/files/boost-binaries/$env:BOOST_VERSION/$boostInstaller/download"
+          $boostDir = "C:\local\boost_$boostVersion"
+          $boostArchive = "boost_$boostVersion.zip"
+          $url = "https://boostorg.jfrog.io/artifactory/main/release/$env:BOOST_VERSION/source/$boostArchive"
           
-          # 下载官方安装包
-          Invoke-WebRequest -Uri $url -OutFile $boostInstaller
+          # 下载 Boost 源代码
+          Write-Host "Downloading Boost source from $url"
+          Invoke-WebRequest -Uri $url -OutFile $boostArchive
           
-          # 静默安装到指定目录
-          Start-Process -Wait -FilePath $boostInstaller -ArgumentList "/SILENT", "/DIR=C:\local\boost_$boostVersion"
+          # 验证文件完整性
+          $hash = (Get-FileHash -Path $boostArchive -Algorithm SHA256).Hash
+          if ($hash -ne "$env:BOOST_SHA256") {
+              Write-Error "Boost archive checksum mismatch! Expected $env:BOOST_SHA256, got $hash"
+              exit 1
+          }
+          
+          # 解压源代码
+          Expand-Archive -Path $boostArchive -DestinationPath .
+          
+          # 重命名目录
+          Rename-Item "boost_$boostVersion" "boost-src"
+          
+          # 配置和编译
+          cd boost-src
+          .\bootstrap.bat
+          .\b2 install --prefix="$boostDir" --with-system --with-filesystem --with-program_options --with-thread --with-regex
           
           # 设置环境变量
-          echo "BOOST_ROOT=C:\local\boost_$boostVersion" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          echo "BOOST_ROOT=$boostDir" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
         env:
           BOOST_VERSION: ${{ env.BOOST_VERSION }}
+          BOOST_SHA256: ${{ env.BOOST_SHA256 }}
 
       - name: Setup MSVC environment
         run: |
