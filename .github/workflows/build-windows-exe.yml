@@ -1,198 +1,104 @@
-name: Build all os
+name: Build Windows Installer
 
 on:
+  workflow_dispatch:
   push:
-    branches:
-     - main
-     - release/*
+    branches: [main, release/*]
     paths:
-     - 'deps/**'
-     - 'src/**'
-     - '**/CMakeLists.txt'
-     - 'version.inc'
-     - 'localization/**'
-     - 'resources/**'
-     - ".github/workflows/build_*.yml"
-     - 'flatpak/**'
+      - 'src/**'
+      - '**/CMakeLists.txt'
+      - 'version.inc'
 
-  pull_request:
-    branches:
-     - main
-     - release/*
-    paths:
-     - 'deps/**'
-     - 'src/**'
-     - '**/CMakeLists.txt'
-     - 'version.inc'
-     - ".github/workflows/build_*.yml"
-     - 'build_linux.sh'
-     - 'build_release_vs2022.bat'
-     - 'build_release_macos.sh'
-     - 'flatpak/**'
-
-  workflow_dispatch: # allows for manual dispatch
-    inputs:
-      build-deps-only:
-        description: 'Only build dependencies (bypasses caching)'
-        type: boolean
-        default: false
-
-concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
-  
 env:
-  BOOST_VERSION: "1.78.0"       # 锁定Boost版本
-  WINDOWS_SDK_VERSION: "10.0.18362.0"  # 指定兼容的SDK版本
+  BOOST_VERSION: "1.78.0"
+  WINDOWS_SDK_VERSION: "10.0.18362.0"
 
 jobs:
-  build_all:
-    name: Build All
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: ubuntu-24.04
-          - os: windows-latest
-          - os: macos-14
-            arch: arm64
-    # 使用内联步骤替代 uses
-    runs-on: ${{ matrix.os }}
+  build_windows:
+    name: Build Windows Installer
+    runs-on: windows-latest
+    timeout-minutes: 90
+
     steps:
-      # 步骤1：检出代码
-      - name: Checkout
+      - name: Checkout v2.3.0
         uses: actions/checkout@v4
         with:
-          path: src
+          repository: SoftFever/OrcaSlicer
+          ref: v2.3.0
+          path: orca-src
 
-      # 步骤2：Windows专用修复
-      - name: Windows SDK and Boost Fixes
-        if: matrix.os == 'windows-latest'
+      - name: Enable Chocolatey global confirmation
+        run: choco feature enable -n allowGlobalConfirmation -y
+
+      - name: Install build tools
         run: |
-          # 安装指定版本的Boost
-          choco install -y boost-msvc-14.3 --version=$env:BOOST_VERSION --no-progress --ignore-dependencies
+          choco install -y ninja cmake git python --no-progress
+          python -m pip install conan
+
+      - name: Install Boost
+        run: |
+          choco install -y boost-msvc-14.3 `
+            --version=$env:BOOST_VERSION `
+            --no-progress `
+            --ignore-dependencies `
+            --force `
+            --accept-license
           
-          # 设置环境变量
+          # 生成Boost路径变量
           $boostVersion = "$env:BOOST_VERSION".Replace('.', '_')
           $boostRoot = "C:/local/boost_$boostVersion"
           echo "BOOST_ROOT=$boostRoot" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          echo "CMAKE_SYSTEM_VERSION=$env:WINDOWS_SDK_VERSION" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+        env:
+          BOOST_VERSION: ${{ env.BOOST_VERSION }}
+
+      - name: Setup MSVC environment
+        id: setup-msvc
+        run: |
+          # 使用vswhere查找正确的VS路径
+          $vsPath = &"${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" `
+            -latest `
+            -products * `
+            -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 `
+            -property installationPath
           
-          # 配置MSVC环境
-          $vsPath = &"${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath
-          cmd.exe /c "call `"$vsPath\VC\Auxiliary\Build\vcvars64.bat`" && set > env_vars.txt"
+          if (-not $vsPath) {
+            Write-Error "Visual Studio installation not found"
+            exit 1
+          }
+          
+          $vcvarsPath = Join-Path $vsPath "VC\Auxiliary\Build\vcvars64.bat"
+          
+          if (-not (Test-Path $vcvarsPath)) {
+            Write-Error "vcvars64.bat not found at $vcvarsPath"
+            exit 1
+          }
+          
+          # 设置环境变量
+          cmd.exe /c "call `"$vcvarsPath`" && set > env_vars.txt"
           Get-Content env_vars.txt | ForEach-Object { 
             if ($_ -match "^(.*?)=(.*)$") { 
-              Write-Output "$($matches[1])=$($matches[2])" >> $env:GITHUB_ENV 
+              Write-Output "$($matches[1])=$($matches[2])" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
             }
           }
-        shell: powershell
+          
+          # 添加SDK版本
+          echo "CMAKE_SYSTEM_VERSION=$env:WINDOWS_SDK_VERSION" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
-      # 步骤3：安装通用依赖
-      - name: Install Dependencies
+      - name: Configure CMake
+        working-directory: ./orca-src
         run: |
-          if [[ "${{ matrix.os }}" == "windows-latest" ]]; then
-            choco install -y ninja cmake git python --no-progress
-            python -m pip install conan
-          elif [[ "${{ matrix.os }}" == "ubuntu-24.04" ]]; then
-            sudo apt-get update
-            sudo apt-get install -y ninja-build cmake git build-essential
-          elif [[ "${{ matrix.os }}" == "macos-14" ]]; then
-            brew update
-            brew install ninja cmake git
-          fi
-        shell: bash
+          cmake -B build -G Ninja ^
+            -DCMAKE_BUILD_TYPE=Release ^
+            -DCMAKE_SYSTEM_VERSION=$env:CMAKE_SYSTEM_VERSION ^
+            -DBOOST_ROOT="$env:BOOST_ROOT"
 
-      # 步骤4：构建项目
-      - name: Build Project
-        run: |
-          if [[ "${{ matrix.os }}" == "windows-latest" ]]; then
-            cd src
-            cmake -B build -G Ninja ^
-              -DCMAKE_BUILD_TYPE=Release ^
-              -DCMAKE_SYSTEM_VERSION=$env:CMAKE_SYSTEM_VERSION ^
-              -DBOOST_ROOT="$env:BOOST_ROOT"
-            cmake --build build --config Release --target package
-          elif [[ "${{ matrix.os }}" == "ubuntu-24.04" ]]; then
-            cd src
-            cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
-            cmake --build build --config Release
-          elif [[ "${{ matrix.os }}" == "macos-14" ]]; then
-            cd src
-            cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
-            cmake --build build --config Release
-          fi
-        shell: bash
+      - name: Build installer
+        working-directory: ./orca-src
+        run: cmake --build build --config Release --target package
 
-      # 步骤5：上传制品
-      - name: Upload Artifact
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.os }}-Build
-          path: |
-            src/build/*.exe
-            src/build/*.AppImage
-            src/build/*.dmg
-          if-no-files-found: error
-
-  flatpak:
-    name: "Flatpak"
-    container:
-      image: ghcr.io/flathub-infra/flatpak-github-actions:gnome-47
-      options: --privileged
-      volumes:
-        - /usr/local/lib/android:/usr/local/lib/android
-        - /usr/share/dotnet:/usr/share/dotnet
-        - /opt/ghc:/opt/ghc1
-        - /usr/local/share/boost:/usr/local/share/boost1
-    strategy:
-      matrix:
-        variant:
-          - arch: x86_64
-            runner: ubuntu-24.04
-          - arch: aarch64
-            runner: ubuntu-24.04-arm
-    runs-on: ${{ matrix.variant.runner }}
-    env:
-      date:
-      ver:
-      ver_pure:
-    steps:
-    - name: "Remove unneeded stuff to free disk space"
-      run:
-        rm -rf /usr/local/lib/android/* /usr/share/dotnet/* /opt/ghc1/* "/usr/local/share/boost1/*"
-    - uses: actions/checkout@v4
-    - name: Get the version and date
-      run: |
-        ver_pure=$(grep 'set(SoftFever_VERSION' version.inc | cut -d '"' -f2)
-        if [[ "${{ github.event_name }}" == "pull_request" ]]; then
-          ver="PR-${{ github.event.number }}"
-        else
-          ver=V$ver_pure
-        fi
-        echo "ver=$ver" >> $GITHUB_ENV
-        echo "ver_pure=$ver_pure" >> $GITHUB_ENV
-        echo "date=$(date +'%Y%m%d')" >> $GITHUB_ENV
-      shell: bash
-    - uses: flathub-infra/flatpak-github-actions/flatpak-builder@master
-      with:
-        bundle: OrcaSlicer-Linux-flatpak_${{ env.ver }}_${{ matrix.variant.arch }}.flatpak
-        manifest-path: flatpak/io.github.softfever.OrcaSlicer.yml
-        cache: true
-        arch: ${{ matrix.variant.arch }}
-        upload-artifact: false
-    - name: Upload artifacts Flatpak
-      uses: actions/upload-artifact@v4
-      with:
-        name: OrcaSlicer-Linux-flatpak_${{ env.ver }}_${{ matrix.variant.arch }}.flatpak
-        path: '/__w/OrcaSlicer/OrcaSlicer/OrcaSlicer-Linux-flatpak_${{ env.ver }}_${{ matrix.variant.arch }}.flatpak'
-    - name: Deploy Flatpak to nightly release
-      if: ${{github.ref == 'refs/heads/main'}}
-      uses: WebFreak001/deploy-nightly@v3.2.0
-      with:
-        upload_url: https://uploads.github.com/repos/SoftFever/OrcaSlicer/releases/137995723/assets{?name,label}
-        release_id: 137995723
-        asset_path: /__w/OrcaSlicer/OrcaSlicer/OrcaSlicer-Linux-flatpak_${{ env.ver }}_${{ matrix.variant.arch }}.flatpak
-        asset_name: OrcaSlicer-Linux-flatpak_${{ env.ver }}_${{ matrix.variant.arch }}.flatpak
-        asset_content_type: application/octet-stream
-        max_releases: 1
+          name: OrcaSlicer-Windows-Installer
+          path: orca-src/build/*.exe
+          retention-days: 7
