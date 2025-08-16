@@ -1,9 +1,11 @@
-# .github/workflows/build_windows_v230_ready.yml
-name: Build Windows v2.3.0 Installer (Ready)
+# .github/workflows/build_windows_v230_final.yml
+name: Build Windows v2.3.0 Installer
 
 on:
   workflow_dispatch:
   push:
+    branches: [ main ]        # 可改为自己的分支
+  pull_request:
     branches: [ main ]
 
 env:
@@ -14,7 +16,7 @@ jobs:
     runs-on: windows-latest
     defaults:
       run:
-        shell: cmd          # 统一用 cmd，解决 PowerShell 续行符问题
+        shell: cmd            # 统一用 cmd，避免 PowerShell 续行问题
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -22,7 +24,7 @@ jobs:
           submodules: recursive
           fetch-depth: 0
 
-      # 1) MSVC 环境 + Ninja
+      # 1) MSVC + Ninja 环境
       - name: Setup MSVC
         uses: ilammy/msvc-dev-cmd@v1
         with:
@@ -30,9 +32,11 @@ jobs:
       - name: Setup Ninja
         uses: seanmiddleditch/gha-setup-ninja@master
 
-      # 2) vcpkg.json
+      # 2) 官方 vcpkg.json（防止 404）
       - name: Pull vcpkg.json
-        run: curl -L https://raw.githubusercontent.com/SoftFever/OrcaSlicer/v2.3.0/vcpkg.json -o vcpkg.json
+        run: >
+          curl -L -f "https://raw.githubusercontent.com/SoftFever/OrcaSlicer/v2.3.0/vcpkg.json"
+          -o vcpkg.json
 
       # 3) vcpkg 缓存
       - name: Cache vcpkg
@@ -48,32 +52,29 @@ jobs:
           git clone --depth=1 https://github.com/microsoft/vcpkg.git
           call vcpkg\bootstrap-vcpkg.bat
 
-      # 4) 预装 Boost（一次性解决找不到 Boost 的问题）
+      # 4) 安装依赖（vcpkg.json 已存在）
       - name: Install vcpkg deps
+        run: call vcpkg\vcpkg install --triplet=x64-windows
+
+      # 5) 配置 & 构建（cmd 单行写法）
+      - name: Configure & Build
         run: |
-          call vcpkg\vcpkg install --triplet=x64-windows
+          cmake -S . -B build ^
+            -G Ninja ^
+            -DCMAKE_BUILD_TYPE=Release ^
+            -DCMAKE_TOOLCHAIN_FILE=%VCPKG_ROOT%/scripts/buildsystems/vcpkg.cmake ^
+            -DVCPKG_TARGET_TRIPLET=x64-windows ^
+            -DSLIC3R_STATIC=ON ^
+            -DSLIC3R_GUI=ON ^
+            -DSLIC3R_PCH=ON
+          cmake --build build --config Release --parallel
 
-      # 5) 配置 & 构建（cmd 下整行写，避免换行）
-      - name: Configure
-        run: >
-          cmake -S . -B build
-          -G Ninja
-          -DCMAKE_BUILD_TYPE=Release
-          -DCMAKE_TOOLCHAIN_FILE=%VCPKG_ROOT%/scripts/buildsystems/vcpkg.cmake
-          -DVCPKG_TARGET_TRIPLET=x64-windows
-          -DSLIC3R_STATIC=ON
-          -DSLIC3R_GUI=ON
-          -DSLIC3R_PCH=ON
-
-      - name: Build
-        run: cmake --build build --config Release --parallel
-
-      # 6) 打包
+      # 6) 打包 Inno Setup
       - name: Package
         run: |
           "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" /Qp build\package\innosetup\orca_setup.iss
 
-      # 7) 上传
+      # 7) 上传安装包
       - name: Upload Installer
         uses: actions/upload-artifact@v4
         with:
